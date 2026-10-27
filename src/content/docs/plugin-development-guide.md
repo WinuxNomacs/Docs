@@ -186,29 +186,124 @@ PluginsAPI.hook([
 
 ### Task Options hooks
 
-The three `Dashboard.addTaskOption...` hooks let a plugin add its own controls to the Task Options, for new tasks and for existing tasks that are edited. A hook returns a React component (or an element, or a list of them, or nothing). The component is rendered with these props:
+The three `Dashboard.addTaskOption...` hooks let a plugin add its own controls, buttons, text or labels to the Task Options, and read and change the options, both when a new task is set up and when an existing task is edited. They work like the other hooks: register a function that returns a React component (or an element, a list of them, or nothing), and WebODM renders it with props that describe the task and let it change the options.
 
-- `context`: what is known about the task: `mode` (`"new"` or `"edit"`), `task` (when editing), `node` and `preset` (the selected processing node and preset), `inReview`, and the functions `getFiles()`, `getCropPolygon()`, `getGcpFile()` and `getPhotoPositions()` (`[longitude, latitude]` of each photo) for new tasks, plus `filesCount`.
-- `taskOptions`: to read and change the options as the user would: `getOptions()`, `getOption(name)`, `setOption(name, value)`, `setOptions([{name, value}])`, `resetOption(name)` and `availableOptions`. In the dialog, a value is set as if it was typed; from the task form, it goes in the "(Custom)" preset.
-- for `addTaskOptionControl`, also the `option` (`name`, `type`, `domain`, `help`, `defaultValue`), its current `value` and `setValue(value)`.
+| Hook                      | Where the component appears                                         | `args`             | Props                                                  |
+| ------------------------- | ------------------------------------------------------------------- | ------------------ | ------------------------------------------------------ |
+| `addTaskOptionsFormItem`  | In the task form, under the Options row (visible without the dialog) | `context`          | `context`, `taskOptions`                               |
+| `addTaskOptionsPanelItem` | At the top of the Edit Task Options dialog                          | `context`          | `context`, `taskOptions`                               |
+| `addTaskOptionControl`    | Beside one option's input in the dialog (asked once for each option) | `context`, `option` | `context`, `taskOptions`, `option`, `value`, `setValue` |
 
-`args` contains the `context`, and for `addTaskOptionControl` the `option`, so a plugin can return a control for some options only:
+#### A first Task Options plugin
+
+Register the hook in a script that `include_js_files` loads on every page:
+
+```python
+# plugin.py
+from app.plugins import PluginBase
+
+class Plugin(PluginBase):
+    def include_js_files(self):
+        return ['task_options.js']
+```
 
 ```javascript
+// public/task_options.js
 PluginsAPI.Dashboard.addTaskOptionControl(function(args){
+    // Asked for every option: answer only for the ones you extend
     if (args.option.name !== "boundary") return;
 
     return function(props){
         return React.createElement("button", {
             type: "button",
             className: "btn btn-default",
+            title: "Fill the boundary with my polygon",
             onClick: function(){ props.setValue(JSON.stringify(myPolygon)); }
         }, "Use my polygon");
     };
 });
 ```
 
-A component that fails to render is left out without affecting the Task Options. When no plugin uses these hooks, the Task Options are unchanged.
+`React` and `ReactDOM` are globals on every WebODM page, so a plain script can use `React.createElement`. To write the component in JSX instead, build it with `build_jsx_components` (see [React Components](#react-components)) and load it as a dependency of the hook; the item appears once it has loaded:
+
+```javascript
+PluginsAPI.Dashboard.addTaskOptionControl([
+    '/plugins/my-plugin/build/BoundaryButton.js'
+], function(args, BoundaryButton){
+    if (args.option.name === "boundary") return BoundaryButton;
+});
+```
+
+#### What the components receive
+
+`context` describes the task being set up:
+
+| Property             | Value                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `mode`               | `"new"` when a task is set up, `"edit"` when an existing task is edited                                 |
+| `task`               | When editing: the task, as `/api/projects/{project}/tasks/{id}/` returns it (`id`, `project`, `available_assets`, `options`, ...) |
+| `node`, `preset`     | The selected processing node (with its available options) and preset                                   |
+| `inReview`           | Whether the form is in the review step of a new task                                                    |
+| `getFiles()`, `filesCount` | New tasks: the selected images and GCP files, and how many there are                              |
+| `getPhotoPositions()` | New tasks: `[longitude, latitude]` of each photo with a GPS position, once the map has read them        |
+| `getCropPolygon()`, `getGcpFile()` | New tasks: the crop polygon drawn on the map, the GCP file                                  |
+
+For an existing task, read what it has through WebODM's API, for example its camera positions (`/api/projects/{project}/tasks/{id}/download/shots.geojson`, when `available_assets` has `shots.geojson`).
+
+`taskOptions` reads and changes the options as the user would:
+
+| Function                   | Does                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `getOptions()`             | The options now set, as `[{name, value}]` (options left at their default are not listed)        |
+| `getOption(name)`          | One option's value, or `undefined` when it is at its default                                      |
+| `setOption(name, value)`   | Sets an option; `undefined` or `null` resets it. Returns `false` if the processing node does not have that option |
+| `setOptions([{name, value}])` | Sets several options at once; returns `true` if any was set                                   |
+| `resetOption(name)`        | Puts an option back to its default                                                                |
+| `availableOptions`         | The processing node's options: `name`, `type`, `value` (the default), `domain`, `help`            |
+
+In the dialog, a value is set as if the user had typed it (and is saved with the preset or the task when the user saves). From the task form, with the dialog closed, the changed options go in a "(Custom)" preset that the form selects, as when the user edits the options.
+
+`addTaskOptionControl` components also receive the `option` they are shown for (`name`, `type`, `domain`, `help`, `defaultValue`), its current `value` and `setValue(value)`. The control is rendered again when its option's value changes. Panel and form items are not told when other options change: call `getOptions()` or `getOption(name)` when you need the values.
+
+#### More examples
+
+A row in the task form that shows an option and resets it:
+
+```javascript
+PluginsAPI.Dashboard.addTaskOptionsFormItem(function(args){
+    return function(props){
+        var dsm = props.taskOptions.getOption("dsm");
+        return React.createElement("div", {className: "form-group"},
+            "Surface model: " + (dsm ? "yes" : "no") + " ",
+            dsm ? React.createElement("a", {href: "javascript:void(0);",
+                onClick: function(){ props.taskOptions.resetOption("dsm"); }}, "Reset") : null);
+    };
+});
+```
+
+A section at the top of the dialog that sets several options at once:
+
+```javascript
+PluginsAPI.Dashboard.addTaskOptionsPanelItem(function(args){
+    if (args.context.mode !== "new") return;   // only for new tasks
+
+    return function(props){
+        return React.createElement("button", {
+            type: "button", className: "btn btn-default btn-sm",
+            onClick: function(){
+                props.taskOptions.setOptions([{name: "dsm", value: true}, {name: "crop", value: 0}]);
+            }
+        }, "Surface model, no cropping");
+    };
+});
+```
+
+#### Good to know
+
+- **No plugin, no change:** when no installed plugin registers one of these hooks, the Task Options render exactly as without them, and nothing is triggered.
+- **Errors stay in the plugin:** a component that throws while rendering is left out (with a warning in the console), and the Task Options keep working, with the other plugins' items.
+- **Older WebODM versions** do not have these hooks. To keep a plugin working on them, check first: `if (PluginsAPI.Dashboard.addTaskOptionControl) { ... }`.
+- **Dialogs of your own** (a map, a picker) can be opened from a button's `onClick`. Append them inside the options' `.modal` element (`event.currentTarget.closest(".modal")`) and give them the focus, so that Bootstrap keeps the focus there and Escape reaches your dialog instead of closing the options.
 
 ## Client Side Callbacks
 
