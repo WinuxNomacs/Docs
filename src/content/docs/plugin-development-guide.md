@@ -180,6 +180,35 @@ PluginsAPI.hook([
 | `Map.addActionButton`               | When action buttons (bottom right of the screen) are about to be added                    |
 | `ModelView.addActionButton`         | When action buttons (bottom right of the screen) are about to be added (in 3D Model)      |
 | `SharePopup.addLinkControl`         | When rendering the Share dialog in Map View                                               |
+| `Dashboard.addTaskOptionsFormItem`  | When the Task Options of a new or existing task are shown (under the Options row)         |
+| `Dashboard.addTaskOptionsPanelItem` | When the Edit Task Options dialog opens (at its top)                                      |
+| `Dashboard.addTaskOptionControl`    | For each option in the Edit Task Options dialog (beside the option's input)               |
+
+### Task Options hooks
+
+The three `Dashboard.addTaskOption...` hooks let a plugin add its own controls to the Task Options, for new tasks and for existing tasks that are edited. A hook returns a React component (or an element, or a list of them, or nothing). The component is rendered with these props:
+
+- `context`: what is known about the task: `mode` (`"new"` or `"edit"`), `task` (when editing), `node` and `preset` (the selected processing node and preset), `inReview`, and the functions `getFiles()`, `getCropPolygon()`, `getGcpFile()` and `getPhotoPositions()` (`[longitude, latitude]` of each photo) for new tasks, plus `filesCount`.
+- `taskOptions`: to read and change the options as the user would: `getOptions()`, `getOption(name)`, `setOption(name, value)`, `setOptions([{name, value}])`, `resetOption(name)` and `availableOptions`. In the dialog, a value is set as if it was typed; from the task form, it goes in the "(Custom)" preset.
+- for `addTaskOptionControl`, also the `option` (`name`, `type`, `domain`, `help`, `defaultValue`), its current `value` and `setValue(value)`.
+
+`args` contains the `context`, and for `addTaskOptionControl` the `option`, so a plugin can return a control for some options only:
+
+```javascript
+PluginsAPI.Dashboard.addTaskOptionControl(function(args){
+    if (args.option.name !== "boundary") return;
+
+    return function(props){
+        return React.createElement("button", {
+            type: "button",
+            className: "btn btn-default",
+            onClick: function(){ props.setValue(JSON.stringify(myPolygon)); }
+        }, "Use my polygon");
+    };
+});
+```
+
+A component that fails to render is left out without affecting the Task Options. When no plugin uses these hooks, the Task Options are unchanged.
 
 ## Client Side Callbacks
 
